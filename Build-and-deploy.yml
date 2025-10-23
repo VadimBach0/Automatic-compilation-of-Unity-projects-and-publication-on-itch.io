@@ -1,0 +1,74 @@
+name: Build and deploy
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  PROJECT_NAME: YOUR_GAME
+
+concurrency:
+  group: unity-build
+  cancel-in-progress: false
+
+jobs:
+  buildAndTestForLinuxBasedPlatforms:
+    name: Build for ${{ matrix.targetPlatform }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        projectPath:
+          - ./
+        unityVersion:
+          - 6000.2.7f2
+        targetPlatform:
+          - WebGL # Must be valid options for Unity: https://docs.unity3d.com/ScriptReference/BuildTarget.html
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 🔹 Quick disk cleanup before cache
+      - name: Free disk space fast (rsync --delete)
+        run: |
+          echo "Before cleanup:"
+          df -h
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /opt/ghc || true
+          echo "After cleanup:"
+          df -h
+
+      # Unity builds take some time, so we do some caching to make builds faster
+      - uses: actions/cache@v3
+        with:
+          path: ${{ matrix.projectPath }}/Library
+          key: Library-${{ env.PROJECT_NAME }}-${{ matrix.unityVersion }}-${{ matrix.targetPlatform }}
+          restore-keys: |
+            Library-${{ env.PROJECT_NAME }}-${{ matrix.unityVersion }}-
+            Library-${{ env.PROJECT_NAME }}-
+            Library-
+
+      # We use Game CI (https://game.ci/) to build the project
+      - uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: ${{ matrix.projectPath }}
+          unityVersion: ${{ matrix.unityVersion }}
+          targetPlatform: ${{ matrix.targetPlatform }}
+          buildName: ${{ env.PROJECT_NAME }}
+          buildsPath: build/${{ matrix.unityVersion }}/${{ matrix.targetPlatform }}
+
+      # Publish the build to itch.io
+      - uses: manleydev/butler-publish-itchio-action@v1.0.3
+        env:
+          BUTLER_CREDENTIALS: ${{ secrets.BUTLER_CREDENTIALS }}
+          CHANNEL: html5
+          ITCH_GAME: ${{ vars.ITCH_GAME }}
+          ITCH_USER: ${{ vars.ITCH_USER }}
+          PACKAGE: build/${{ matrix.unityVersion }}/${{ matrix.targetPlatform }}
